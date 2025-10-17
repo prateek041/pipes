@@ -18,5 +18,5 @@ type EventPaid struct {
 type Config struct {
 	MaxWorkersPerStage int
 	MaxBatchSize       int
-	BatchTimout        time.Duration
+	BatchTimeout       time.Duration
 }

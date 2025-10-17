@@ -51,7 +51,10 @@ func (p *Pipeline) Execute(input []SimpleEvent) []SimpleEvent {
 		inChan := channels[i]
 		outChan := channels[i+1]
 
+		// go func(s Stage) {
 		go stage.Connect(&wg, inChan, outChan, emitter)
+		// }(stage)
+
 	}
 
 	go func() {
