@@ -29,6 +29,12 @@ func (p *Pipeline) Filter(fn func(SimpleEvent) bool) *Pipeline {
 	return p
 }
 
+func (p *Pipeline) Reduce(fn func([]SimpleEvent) SimpleEvent) *Pipeline {
+	stage := NewReduceStage(p.config, fn)
+	p.stages = append(p.stages, stage)
+	return p
+}
+
 // Execute runs the pipeline on the provided input.
 // RIght now the implementation is SEQUENTIAL to prove chaining works.
 func (p *Pipeline) Execute(input []SimpleEvent) []SimpleEvent {
