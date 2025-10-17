@@ -38,6 +38,7 @@ func (s *FilterStage) ProcessBatch(batch []SimpleEvent) ([]SimpleEvent, error) {
 }
 
 func (s *FilterStage) Connect(wg *sync.WaitGroup, inChan <-chan SimpleEvent, outChan chan<- SimpleEvent, emitter Emitter) error {
+	defer wg.Done()
 
 	// Spin up the workers and start processing.
 	workerChan := make(chan []SimpleEvent, s.config.MaxWorkersPerStage)

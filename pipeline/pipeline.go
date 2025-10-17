@@ -35,11 +35,32 @@ func (p *Pipeline) Reduce(fn func([]SimpleEvent) SimpleEvent) *Pipeline {
 	return p
 }
 
+func (p *Pipeline) Collect() *CollectStage {
+	stage := NewCollectStage()
+	p.stages = append(p.stages, stage)
+	return stage
+}
+
+// ExecuteWithCollector runs the pipeline and returns the collector for accessing results
+func (p *Pipeline) ExecuteWithCollector(input []SimpleEvent) *CollectStage {
+	// Find the collector stage
+	var collector *CollectStage
+	for _, stage := range p.stages {
+		if collectStage, ok := stage.(*CollectStage); ok {
+			collector = collectStage
+			break
+		}
+	}
+
+	p.Execute(input)
+	return collector
+}
+
 // Execute runs the pipeline on the provided input.
 // RIght now the implementation is SEQUENTIAL to prove chaining works.
-func (p *Pipeline) Execute(input []SimpleEvent) []SimpleEvent {
+func (p *Pipeline) Execute(input []SimpleEvent) {
 	if len(p.stages) == 0 {
-		return input
+		return
 	}
 
 	var wg sync.WaitGroup
@@ -70,17 +91,16 @@ func (p *Pipeline) Execute(input []SimpleEvent) []SimpleEvent {
 		close(channels[0]) // once the input events are done, close the channel.
 	}()
 
-	// manage pipeline shutdown
+	// Start a goroutine to drain the final channel
+	finalChan := channels[len(channels)-1]
 	go func() {
-		wg.Wait()
-		close(channels[len(channels)-1]) // close the final output channel when its all done
+		for range finalChan {
+			// Drain any remaining events to prevent goroutine leaks
+			// We can also send these events to another stage if needed.
+			// Keeping this step open ended as of now.
+		}
 	}()
 
-	// collect all results.
-	var results []SimpleEvent
-	for event := range channels[len(channels)-1] {
-		results = append(results, event)
-	}
+	wg.Wait()
 
-	return results
 }

@@ -31,6 +31,7 @@ func (s *ReduceStage) ProcessBatch(batch []SimpleEvent) ([]SimpleEvent, error) {
 }
 
 func (s *ReduceStage) Connect(wg *sync.WaitGroup, inChan <-chan SimpleEvent, outChan chan<- SimpleEvent, emitter Emitter) error {
+	defer wg.Done()
 	var workerWg sync.WaitGroup
 	workChan := make(chan []SimpleEvent, s.config.MaxWorkersPerStage)
 	for i := 0; i < s.config.MaxWorkersPerStage; i++ {
