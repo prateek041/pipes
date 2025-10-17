@@ -1,5 +1,7 @@
 package pipeline
 
+import "sync"
+
 type Pipeline struct {
 	config Config
 	stages []Stage
@@ -30,20 +32,46 @@ func (p *Pipeline) Filter(fn func(SimpleEvent) bool) *Pipeline {
 // Execute runs the pipeline on the provided input.
 // RIght now the implementation is SEQUENTIAL to prove chaining works.
 func (p *Pipeline) Execute(input []SimpleEvent) []SimpleEvent {
-	// For simplicity right now, we'll pass the entire input as one batch
-	// and sequentially process it through the stages.
-
-	currentBatch := input
-	var err error
-
-	for _, stage := range p.stages {
-		// Stage.ProcessBatch is called directly on the full batch.
-		// Output of one stage becomes the input of the next.
-		currentBatch, err = stage.ProcessBatch(currentBatch)
-		if err != nil {
-			panic(err)
-		}
+	if len(p.stages) == 0 {
+		return input
 	}
 
-	return currentBatch
+	var wg sync.WaitGroup
+	var emitter Emitter // will be implemented later.
+
+	// Create channels for each connection between stages.
+	channels := make([]chan SimpleEvent, len(p.stages)+1)
+	for i := range channels {
+		channels[i] = make(chan SimpleEvent, p.config.MaxBatchSize)
+	}
+
+	// start all concurrent stages and connect them.
+	for i, stage := range p.stages {
+		wg.Add(1)
+		inChan := channels[i]
+		outChan := channels[i+1]
+
+		go stage.Connect(&wg, inChan, outChan, emitter)
+	}
+
+	go func() {
+		for _, event := range input {
+			channels[0] <- event
+		}
+		close(channels[0]) // once the input events are done, close the channel.
+	}()
+
+	// manage pipeline shutdown
+	go func() {
+		wg.Wait()
+		close(channels[len(channels)-1]) // close the final output channel when its all done
+	}()
+
+	// collect all results.
+	var results []SimpleEvent
+	for event := range channels[len(channels)-1] {
+		results = append(results, event)
+	}
+
+	return results
 }
