@@ -41,10 +41,15 @@ func main() {
 		Filter(filterFn).
 		Map(mapFn)
 
+	collector := p.Collect()
+
 	// Execute the pipeline
-	outputEvents := p.Execute(inputEvents)
+	p.Execute(inputEvents)
 
 	// Print the final result
-	fmt.Println("Output:", outputEvents)
+	fmt.Println("Output:", collector.Results())
 	fmt.Println("--- Test Complete ---")
+
+	// Run generic demo
+	genericDemo()
 }
