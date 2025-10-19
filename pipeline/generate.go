@@ -5,30 +5,30 @@ import (
 	"time"
 )
 
-// GenericGenerateStage implements the GenericStage interface for the Generate primitive.
+// GenerateStage implements the Stage interface for the Generate primitive.
 // Generate takes an input event of type T and produces two events: the original + a new generated one.
-type GenericGenerateStage[T any] struct {
+type GenerateStage[T any] struct {
 	config   Config
 	userFunc func(T) T // Function to generate new event from original
 }
 
-// NewGenericGenerateStage creates a new GenericGenerateStage.
-func NewGenericGenerateStage[T any](cfg Config, fn func(T) T) *GenericGenerateStage[T] {
-	return &GenericGenerateStage[T]{
+// NewGenerateStage creates a new GenerateStage.
+func NewGenerateStage[T any](cfg Config, fn func(T) T) *GenerateStage[T] {
+	return &GenerateStage[T]{
 		config:   cfg,
 		userFunc: fn,
 	}
 }
 
 // Name returns the stage name.
-func (s *GenericGenerateStage[T]) Name() string {
-	return "GenericGenerate"
+func (s *GenerateStage[T]) Name() string {
+	return "Generate"
 }
 
 // ProcessBatch applies the user's Generate function to every event in the batch.
 // For each input event, outputs the original event + a newly generated event.
 // Input: [A, B, C] -> Output: [A, A', B, B', C, C'] where A', B', C' are generated events.
-func (s *GenericGenerateStage[T]) ProcessBatch(batch []T) ([]T, error) {
+func (s *GenerateStage[T]) ProcessBatch(batch []T) ([]T, error) {
 	output := make([]T, 0, len(batch)*2) // Double capacity for original + generated
 
 	for _, event := range batch {
@@ -41,7 +41,7 @@ func (s *GenericGenerateStage[T]) ProcessBatch(batch []T) ([]T, error) {
 }
 
 // Connect implements the concurrent processing logic with batching and worker pools.
-func (s *GenericGenerateStage[T]) Connect(wg *sync.WaitGroup, inChan <-chan T, outChan chan<- T, emitter Emitter) error {
+func (s *GenerateStage[T]) Connect(wg *sync.WaitGroup, inChan <-chan T, outChan chan<- T, emitter Emitter) error {
 	defer wg.Done()
 
 	// start the worker pool.

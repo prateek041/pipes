@@ -1,64 +1,82 @@
 package pipeline
 
-import "sync"
+import (
+	"sync"
+)
 
-type Pipeline struct {
-	config Config
-	stages []Stage
+// Generic Pipeline that can work with any type T
+type Pipeline[T any] struct {
+	config          Config
+	stages          []Stage[T]
+	sourceTransform interface{} // Holds transformation info for mixed-type execution
 }
 
-// NewPipeline creates a new Pipeline instance.
-func NewPipeline(cfg Config) *Pipeline {
-	return &Pipeline{
+// NewPipeline creates a new generic Pipeline instance.
+func NewPipeline[T any](cfg Config) *Pipeline[T] {
+	return &Pipeline[T]{
 		config: cfg,
-		stages: make([]Stage, 0),
+		stages: make([]Stage[T], 0),
 	}
 }
 
 // Map adds a MapStage to the pipeline.
-func (p *Pipeline) Map(fn func(SimpleEvent) SimpleEvent) *Pipeline {
+func (p *Pipeline[T]) Map(fn func(T) T) *Pipeline[T] {
 	stage := NewMapStage(p.config, fn)
 	p.stages = append(p.stages, stage)
 	return p
 }
 
 // Filter adds a FilterStage to the pipeline.
-func (p *Pipeline) Filter(fn func(SimpleEvent) bool) *Pipeline {
+func (p *Pipeline[T]) Filter(fn func(T) bool) *Pipeline[T] {
 	stage := NewFilterStage(p.config, fn)
 	p.stages = append(p.stages, stage)
 	return p
 }
 
-func (p *Pipeline) Reduce(fn func([]SimpleEvent) SimpleEvent) *Pipeline {
-	stage := NewReduceStage(p.config, fn)
+// Generate adds a GenerateStage to the pipeline.
+func (p *Pipeline[T]) Generate(fn func(T) T) *Pipeline[T] {
+	stage := NewGenerateStage(p.config, fn)
 	p.stages = append(p.stages, stage)
 	return p
 }
 
-func (p *Pipeline) Collect() *CollectStage {
-	stage := NewCollectStage()
+// Collect adds a CollectStage to the pipeline and returns it for accessing results.
+func (p *Pipeline[T]) Collect() *CollectStage[T] {
+	stage := NewCollectStage[T]()
+
+	if p.sourceTransform != nil {
+		// Handle transformation + collection in one step
+		return p.collectWithTransform(stage)
+	}
+
+	// Normal collection (existing logic)
 	p.stages = append(p.stages, stage)
 	return stage
 }
 
-// ExecuteWithCollector runs the pipeline and returns the collector for accessing results
-func (p *Pipeline) ExecuteWithCollector(input []SimpleEvent) *CollectStage {
-	// Find the collector stage
-	var collector *CollectStage
-	for _, stage := range p.stages {
-		if collectStage, ok := stage.(*CollectStage); ok {
-			collector = collectStage
-			break
-		}
-	}
+// collectWithTransform handles collection for transformed pipelines
+func (p *Pipeline[T]) collectWithTransform(collectStage *CollectStage[T]) *CollectStage[T] {
+	// This is a practical implementation for Phase 2B
+	// We'll handle the transformation + chaining at execution time
 
-	p.Execute(input)
-	return collector
+	// Add the collect stage to the pipeline
+	p.stages = append(p.stages, collectStage)
+	return collectStage
 }
 
 // Execute runs the pipeline on the provided input.
-// RIght now the implementation is SEQUENTIAL to prove chaining works.
-func (p *Pipeline) Execute(input []SimpleEvent) {
+func (p *Pipeline[T]) Execute(inputChan <-chan T) {
+	// if p.sourceTransform != nil {
+	// This is a transformed pipeline, use special execution path
+	// p.executeWithTransform(input)
+	// return
+	// }
+
+	p.executeNormal(inputChan)
+}
+
+// executeNormal handles regular Pipeline[T] execution
+func (p *Pipeline[T]) executeNormal(inputChan <-chan T) {
 	if len(p.stages) == 0 {
 		return
 	}
@@ -67,9 +85,9 @@ func (p *Pipeline) Execute(input []SimpleEvent) {
 	var emitter Emitter // will be implemented later.
 
 	// Create channels for each connection between stages.
-	channels := make([]chan SimpleEvent, len(p.stages)+1)
+	channels := make([]chan T, len(p.stages)+1)
 	for i := range channels {
-		channels[i] = make(chan SimpleEvent, p.config.MaxBatchSize)
+		channels[i] = make(chan T, p.config.MaxBatchSize)
 	}
 
 	// start all concurrent stages and connect them.
@@ -78,14 +96,16 @@ func (p *Pipeline) Execute(input []SimpleEvent) {
 		inChan := channels[i]
 		outChan := channels[i+1]
 
-		// go func(s Stage) {
-		go stage.Connect(&wg, inChan, outChan, emitter)
-		// }(stage)
-
+		go func(s Stage[T], in <-chan T, out chan<- T) {
+			if err := s.Connect(&wg, in, out, emitter); err != nil {
+				// TODO: Better error handling
+				panic(err)
+			}
+		}(stage, inChan, outChan)
 	}
 
 	go func() {
-		for _, event := range input {
+		for event := range inputChan {
 			channels[0] <- event
 		}
 		close(channels[0]) // once the input events are done, close the channel.
@@ -96,11 +116,8 @@ func (p *Pipeline) Execute(input []SimpleEvent) {
 	go func() {
 		for range finalChan {
 			// Drain any remaining events to prevent goroutine leaks
-			// We can also send these events to another stage if needed.
-			// Keeping this step open ended as of now.
 		}
 	}()
 
 	wg.Wait()
-
 }

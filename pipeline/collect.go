@@ -2,26 +2,26 @@ package pipeline
 
 import "sync"
 
-type CollectStage struct {
-	results []SimpleEvent
+type CollectStage[T any] struct {
+	results []T
 	lock    sync.Mutex
 }
 
-func NewCollectStage() *CollectStage {
-	return &CollectStage{
-		results: make([]SimpleEvent, 0),
+func NewCollectStage[T any]() *CollectStage[T] {
+	return &CollectStage[T]{
+		results: make([]T, 0),
 	}
 }
 
-func (s *CollectStage) Name() string {
+func (s *CollectStage[T]) Name() string {
 	return "Collect"
 }
 
-func (s *CollectStage) ProcessBatch(batch []SimpleEvent) ([]SimpleEvent, error) {
+func (s *CollectStage[T]) ProcessBatch(batch []T) ([]T, error) {
 	return batch, nil
 }
 
-func (s *CollectStage) Connect(wg *sync.WaitGroup, inChan <-chan SimpleEvent, outChan chan<- SimpleEvent, emitter Emitter) error {
+func (s *CollectStage[T]) Connect(wg *sync.WaitGroup, inChan <-chan T, outChan chan<- T, emitter Emitter) error {
 	defer wg.Done()
 	defer close(outChan)
 
@@ -36,7 +36,7 @@ func (s *CollectStage) Connect(wg *sync.WaitGroup, inChan <-chan SimpleEvent, ou
 	return nil
 }
 
-func (s *CollectStage) Results() []SimpleEvent {
+func (s *CollectStage[T]) Results() []T {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	return s.results

@@ -6,27 +6,27 @@ import (
 )
 
 // FilterStage implements the Stage interface for the Filter primitive.
-type FilterStage struct {
+type FilterStage[T any] struct {
 	config   Config
-	userFunc func(SimpleEvent) bool
+	userFunc func(T) bool
 }
 
 // NewFilterStage creates a new FilterStage.
-func NewFilterStage(cfg Config, fn func(SimpleEvent) bool) *FilterStage {
-	return &FilterStage{
+func NewFilterStage[T any](cfg Config, fn func(T) bool) *FilterStage[T] {
+	return &FilterStage[T]{
 		config:   cfg,
 		userFunc: fn,
 	}
 }
 
 // Name returns the stage name.
-func (s *FilterStage) Name() string {
+func (s *FilterStage[T]) Name() string {
 	return "Filter"
 }
 
 // ProcessBatch applies the user's Filter function and only passes events that return true.
-func (s *FilterStage) ProcessBatch(batch []SimpleEvent) ([]SimpleEvent, error) {
-	output := make([]SimpleEvent, 0, len(batch))
+func (s *FilterStage[T]) ProcessBatch(batch []T) ([]T, error) {
+	output := make([]T, 0, len(batch))
 
 	for _, event := range batch {
 		if s.userFunc(event) {
@@ -37,11 +37,11 @@ func (s *FilterStage) ProcessBatch(batch []SimpleEvent) ([]SimpleEvent, error) {
 	return output, nil
 }
 
-func (s *FilterStage) Connect(wg *sync.WaitGroup, inChan <-chan SimpleEvent, outChan chan<- SimpleEvent, emitter Emitter) error {
+func (s *FilterStage[T]) Connect(wg *sync.WaitGroup, inChan <-chan T, outChan chan<- T, emitter Emitter) error {
 	defer wg.Done()
 
 	// Spin up the workers and start processing.
-	workerChan := make(chan []SimpleEvent, s.config.MaxWorkersPerStage)
+	workerChan := make(chan []T, s.config.MaxWorkersPerStage)
 	var workerWg sync.WaitGroup
 
 	for i := 0; i < s.config.MaxWorkersPerStage; i++ {
@@ -62,7 +62,7 @@ func (s *FilterStage) Connect(wg *sync.WaitGroup, inChan <-chan SimpleEvent, out
 		}()
 	}
 
-	batch := make([]SimpleEvent, 0, s.config.MaxBatchSize)
+	batch := make([]T, 0, s.config.MaxBatchSize)
 	timer := time.NewTimer(s.config.BatchTimeout)
 
 	if !timer.Stop() {
@@ -92,7 +92,7 @@ func (s *FilterStage) Connect(wg *sync.WaitGroup, inChan <-chan SimpleEvent, out
 
 			if len(batch) >= s.config.MaxBatchSize {
 				workerChan <- batch
-				batch = make([]SimpleEvent, 0, s.config.MaxBatchSize)
+				batch = make([]T, 0, s.config.MaxBatchSize)
 
 				if !timer.Stop() {
 					select {
@@ -105,7 +105,7 @@ func (s *FilterStage) Connect(wg *sync.WaitGroup, inChan <-chan SimpleEvent, out
 		case <-timer.C:
 			if len(batch) > 0 {
 				workerChan <- batch
-				batch = make([]SimpleEvent, 0, s.config.MaxBatchSize)
+				batch = make([]T, 0, s.config.MaxBatchSize)
 			}
 		}
 	}

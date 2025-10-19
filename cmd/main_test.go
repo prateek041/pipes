@@ -205,37 +205,34 @@ func sequentialProcessing(events []string) []string {
 	return results
 }
 
-// concurrentProcessing implements Parse -> Enrich -> Serialize using pipeline
+// concurrentProcessing implements Parse -> Enrich -> Serialize using single pipeline
 func concurrentProcessing(events []string, workerCount int) []string {
 	cfg := pipeline.Config{
 		MaxWorkersPerStage: workerCount,
-		MaxBatchSize:       50,
+		MaxBatchSize:       80,
+		BatchTimeout:       2 * time.Second,
 	}
 
-	// Parse & Validate Pipeline
-	parsePipeline := pipeline.NewPipeline[string](cfg).
+	// Single pipeline: Parse & Validate -> Enrich & Transform -> Serialize
+	pipe := pipeline.NewPipeline[string](cfg).
 		Filter(func(jsonStr string) bool {
 			// JSON parsing and validation
 			_, valid := parseAndValidate(jsonStr)
 			return valid
 		}).
 		Map(func(jsonStr string) string {
-			// Return the JSON string for next stage
-			return jsonStr
-		})
-
-	// Enrich & Transform Pipeline
-	enrichPipeline := pipeline.NewPipeline[string](cfg).
-		Map(func(jsonStr string) string {
+			// Parse again for enrichment (could be optimized but keeping consistent with original)
 			parsed, _ := parseAndValidate(jsonStr)
 
+			// Enrich & Transform
 			enriched := enrichAndTransform(parsed)
 
+			// Serialize result
 			return serializeResult(enriched)
 		})
 
-	// Connect pipelines
-	parseCollector := parsePipeline.Collect()
+	// Single collector for the entire pipeline
+	collector := pipe.Collect()
 
 	// Convert slice to channel for execution
 	inputChan := make(chan string, len(events))
@@ -246,23 +243,9 @@ func concurrentProcessing(events []string, workerCount int) []string {
 		}
 	}()
 
-	// Execute parse pipeline
-	parsePipeline.Execute(inputChan)
-	parsedResults := parseCollector.Results()
-
-	// Execute enrich pipeline
-	enrichCollector := enrichPipeline.Collect()
-
-	enrichChan := make(chan string, len(parsedResults))
-	go func() {
-		defer close(enrichChan)
-		for _, result := range parsedResults {
-			enrichChan <- result
-		}
-	}()
-
-	enrichPipeline.Execute(enrichChan)
-	return enrichCollector.Results()
+	// Execute single pipeline - no blocking waits between stages
+	pipe.Execute(inputChan)
+	return collector.Results()
 }
 
 // Benchmark function that compares sequential vs concurrent performance
@@ -363,4 +346,335 @@ func Benchmark(b *testing.B) {
 	b.Log("")
 	b.Log("ANALYSIS SUMMARY:")
 	b.Log(strings.Repeat("=", 120))
+}
+
+// ComputeEvent represents an event with heavy computational requirements
+type ComputeEvent struct {
+	ID          int     `json:"id"`
+	Email       string  `json:"email"`
+	JSONPayload string  `json:"payload"`
+	IPAddress   string  `json:"ip_address"`
+	Value       float64 `json:"value"`
+	Timestamp   int64   `json:"timestamp"`
+}
+
+// AggregatedResult represents the result after reduce operation
+type AggregatedResult struct {
+	BatchSum       float64 `json:"batch_sum"`
+	AverageValue   float64 `json:"average_value"`
+	ProcessedCount int     `json:"processed_count"`
+	HashedEmails   string  `json:"hashed_emails"`
+	ProcessedAt    int64   `json:"processed_at"`
+}
+
+// generateComputeTestData creates test events with heavy computation requirements
+func generateComputeTestData(count int) []ComputeEvent {
+	events := make([]ComputeEvent, count)
+
+	for i := 0; i < count; i++ {
+		// Create complex JSON payload for parsing
+		payload := fmt.Sprintf(`{
+			"metadata": {
+				"transaction_id": "tx_%d",
+				"user_agent": "Mozilla/5.0 (complex user agent string %d)",
+				"session_data": {
+					"clicks": %d,
+					"duration": %d,
+					"pages_visited": ["/page1", "/page2", "/checkout"]
+				}
+			},
+			"cart_items": [
+				{"item_id": %d, "price": %.2f, "quantity": %d}
+			]
+		}`, i+1, i+1, (i%50)+1, (i%3600)+60, i+1, float64(10+i%90)+0.99, (i%5)+1)
+
+		events[i] = ComputeEvent{
+			ID:          i + 1,
+			Email:       fmt.Sprintf("user%d@example%d.com", i+1, (i%10)+1),
+			JSONPayload: payload,
+			IPAddress:   fmt.Sprintf("192.168.%d.%d", (i%255)+1, (i%254)+1),
+			Value:       float64(100+(i%500)) + 0.99,
+			Timestamp:   time.Now().Unix() + int64(i),
+		}
+	}
+
+	return events
+}
+
+// Heavy computational functions
+
+// validateAndParseJSON performs heavy JSON parsing and validation
+func validateAndParseJSON(event ComputeEvent) (map[string]interface{}, bool) {
+	// Regex validation for email
+	if !emailRegex.MatchString(event.Email) {
+		return nil, false
+	}
+
+	// Heavy JSON parsing
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(event.JSONPayload), &parsed); err != nil {
+		return nil, false
+	}
+
+	return parsed, true
+}
+
+// computeHashes performs multiple SHA-256 hashing operations
+func computeHashes(event ComputeEvent) ComputeEvent {
+	// Hash email multiple times for increased computational load
+	hashedEmail := hashString(event.Email)
+	for i := 0; i < 3; i++ { // Multiple rounds of hashing
+		hashedEmail = hashString(hashedEmail)
+	}
+
+	// Hash IP address
+	hashedIP := hashString(event.IPAddress)
+	for i := 0; i < 3; i++ { // Multiple rounds of hashing
+		hashedIP = hashString(hashedIP)
+	}
+
+	// Combine hashes as new data field
+	event.Email = hashedEmail[:16] // Truncate for readability
+	event.IPAddress = hashedIP[:16]
+
+	return event
+}
+
+// heavyReduceFunction performs aggregation with heavy computation
+func heavyReduceFunction(batch []ComputeEvent) AggregatedResult {
+	if len(batch) == 0 {
+		return AggregatedResult{}
+	}
+
+	var sum float64
+	var emailHashes []string
+
+	for _, event := range batch {
+		sum += event.Value
+
+		// Perform heavy computation for each event in reduce
+		hashedEmail := hashString(fmt.Sprintf("%s_%d", event.Email, event.ID))
+
+		// Additional regex processing
+		ipPattern := regexp.MustCompile(`\d+\.\d+\.\d+\.\d+`)
+		if ipPattern.MatchString(event.IPAddress) {
+			emailHashes = append(emailHashes, hashedEmail[:8])
+		}
+	}
+
+	// Heavy string operations
+	combinedHashes := strings.Join(emailHashes, "|")
+	finalHash := hashString(combinedHashes)
+
+	return AggregatedResult{
+		BatchSum:       sum,
+		AverageValue:   sum / float64(len(batch)),
+		ProcessedCount: len(batch),
+		HashedEmails:   finalHash[:16],
+		ProcessedAt:    time.Now().Unix(),
+	}
+}
+
+// Sequential processing with reduce streaming pattern
+func sequentialReduceProcessing(events []ComputeEvent) []AggregatedResult {
+	var results []AggregatedResult
+
+	// Process in batches like the pipeline would
+	batchSize := 10
+	for i := 0; i < len(events); i += batchSize {
+		end := i + batchSize
+		if end > len(events) {
+			end = len(events)
+		}
+
+		batch := events[i:end]
+
+		// Filter and map operations
+		var filteredBatch []ComputeEvent
+		for _, event := range batch {
+			// Heavy validation
+			if _, valid := validateAndParseJSON(event); valid && event.Value > 150.0 {
+				// Heavy computation
+				processed := computeHashes(event)
+				filteredBatch = append(filteredBatch, processed)
+			}
+		}
+
+		// Reduce operation - directly append the result instead of transforming to string
+		if len(filteredBatch) > 0 {
+			reduced := heavyReduceFunction(filteredBatch)
+			results = append(results, reduced)
+		}
+	}
+
+	return results
+}
+
+// Concurrent processing using pipeline with reduce streaming
+func concurrentReduceProcessing(events []ComputeEvent, workerCount int) []AggregatedResult {
+	cfg := pipeline.Config{
+		MaxWorkersPerStage: workerCount,
+		MaxBatchSize:       80,
+		BatchTimeout:       3 * time.Second,
+	}
+
+	// Create input channel
+	inputChan := make(chan pipeline.ComputeEvent, len(events))
+
+	// First pipeline: Filter -> Map with heavy computation
+	firstPipeline := pipeline.NewPipeline[pipeline.ComputeEvent](cfg).
+		Filter(func(event pipeline.ComputeEvent) bool {
+			// Heavy validation and parsing
+			localEvent := ComputeEvent{
+				ID: event.ID, Email: event.Email, JSONPayload: event.JSONPayload,
+				IPAddress: event.IPAddress, Value: event.Value, Timestamp: event.Timestamp,
+			}
+			_, valid := validateAndParseJSON(localEvent)
+			return valid && event.Value > 150.0
+		}).
+		Map(func(event pipeline.ComputeEvent) pipeline.ComputeEvent {
+			// Heavy hashing computation
+			localEvent := ComputeEvent{
+				ID: event.ID, Email: event.Email, JSONPayload: event.JSONPayload,
+				IPAddress: event.IPAddress, Value: event.Value, Timestamp: event.Timestamp,
+			}
+			processed := computeHashes(localEvent)
+			return pipeline.ComputeEvent{
+				ID: processed.ID, Email: processed.Email, JSONPayload: processed.JSONPayload,
+				IPAddress: processed.IPAddress, Value: processed.Value, Timestamp: processed.Timestamp,
+			}
+		})
+
+	// Use ReduceTransformAndStream to connect pipelines
+	reducedChan := pipeline.ReduceTransformAndStream(firstPipeline,
+		func(batch []pipeline.ComputeEvent) AggregatedResult {
+			// Convert to ComputeEvent for processing
+			convertedBatch := make([]ComputeEvent, len(batch))
+			for i, event := range batch {
+				convertedBatch[i] = ComputeEvent{
+					ID: event.ID, Email: event.Email, JSONPayload: event.JSONPayload,
+					IPAddress: event.IPAddress, Value: event.Value, Timestamp: event.Timestamp,
+				}
+			}
+			return heavyReduceFunction(convertedBatch)
+		}, inputChan)
+
+	// Collect results directly without additional transformation
+	var finalResults []AggregatedResult
+
+	// Send events in goroutine
+	go func() {
+		defer close(inputChan)
+		for _, event := range events {
+			inputChan <- pipeline.ComputeEvent{
+				ID: event.ID, Email: event.Email, JSONPayload: event.JSONPayload,
+				IPAddress: event.IPAddress, Value: event.Value, Timestamp: event.Timestamp,
+			}
+		}
+	}()
+
+	// Collect all results from the reduce stream
+	for result := range reducedChan {
+		finalResults = append(finalResults, result)
+	}
+
+	return finalResults
+}
+
+// BenchmarkReduceStreaming benchmarks the reduce streaming functionality
+func BenchmarkReduceStreaming(b *testing.B) {
+	eventCounts := []int{100, 1000, 5000, 10000, 100000, 1000000}
+
+	b.Log("")
+	b.Log(strings.Repeat("=", 120))
+	b.Log("REDUCE STREAMING PIPELINE: Filter -> Map -> Reduce -> Stream")
+	b.Log("Heavy Ops: JSON Parsing + Email Regex + Multi-round SHA-256 + Reduce Aggregation")
+	b.Log(strings.Repeat("=", 120))
+	b.Log("")
+	b.Log("PIPELINE PATTERN:")
+	b.Log("Pipeline 1: Filter(validate+parse) -> Map(multi-hash) -> Reduce(aggregate)")
+	b.Log("Removed single-goroutine final transformation bottleneck")
+	b.Log("Direct AggregatedResult comparison for fair benchmarking")
+	b.Log("")
+
+	// Results storage for comparison table
+	type ReduceBenchResult struct {
+		Events         int
+		SeqTime        time.Duration
+		ConcTime       time.Duration
+		SeqThroughput  float64
+		ConcThroughput float64
+	}
+
+	var results []ReduceBenchResult
+	workers := runtime.NumCPU()
+
+	for _, count := range eventCounts {
+		events := generateComputeTestData(count)
+		result := ReduceBenchResult{Events: count}
+
+		// Sequential benchmark
+		b.Run(fmt.Sprintf("ReduceSeq_%d", count), func(b *testing.B) {
+			b.ResetTimer()
+
+			start := time.Now()
+			for i := 0; i < b.N; i++ {
+				processedResults := sequentialReduceProcessing(events)
+				_ = processedResults
+			}
+			result.SeqTime = time.Since(start) / time.Duration(b.N)
+			result.SeqThroughput = float64(count) / result.SeqTime.Seconds()
+
+			b.ReportMetric(result.SeqThroughput, "events/sec")
+		})
+
+		// Concurrent benchmark with reduce streaming
+		b.Run(fmt.Sprintf("ReduceConc_%d", count), func(b *testing.B) {
+			b.ResetTimer()
+
+			start := time.Now()
+			for i := 0; i < b.N; i++ {
+				processedResults := concurrentReduceProcessing(events, workers)
+				_ = processedResults
+			}
+			result.ConcTime = time.Since(start) / time.Duration(b.N)
+			result.ConcThroughput = float64(count) / result.ConcTime.Seconds()
+
+			b.ReportMetric(result.ConcThroughput, "events/sec")
+		})
+
+		results = append(results, result)
+	}
+
+	// Print comparison table
+	b.Log("")
+	b.Log("REDUCE STREAMING PERFORMANCE COMPARISON")
+	b.Log(fmt.Sprintf("%-12s │ %-30s │ %-30s │ %-12s │ %-15s", "Events", "Sequential", "Concurrent+Reduce", "Winner", "Speedup"))
+	b.Log(strings.Repeat("─", 12) + "┼" + strings.Repeat("─", 30) + "┼" + strings.Repeat("─", 30) + "┼" + strings.Repeat("─", 12) + "┼" + strings.Repeat("─", 15))
+
+	for _, r := range results {
+		winner := "Sequential"
+		speedup := r.SeqTime.Seconds() / r.ConcTime.Seconds()
+		if r.ConcThroughput > r.SeqThroughput {
+			winner = "Concurrent"
+		} else {
+			speedup = r.ConcTime.Seconds() / r.SeqTime.Seconds()
+		}
+
+		seqStr := fmt.Sprintf("%.0f ns/op, %.0f e/s", float64(r.SeqTime.Nanoseconds()), r.SeqThroughput)
+		concStr := fmt.Sprintf("%.0f ns/op, %.0f e/s", float64(r.ConcTime.Nanoseconds()), r.ConcThroughput)
+		speedupStr := fmt.Sprintf("%.2fx", speedup)
+
+		b.Log(fmt.Sprintf("%-12d │ %-30s │ %-30s │ %-12s │ %-15s",
+			r.Events, seqStr, concStr, winner, speedupStr))
+	}
+
+	b.Log("")
+	b.Log("REDUCE STREAMING ANALYSIS:")
+	b.Log("Multi-round SHA-256 hashing (3 rounds per email/IP)")
+	b.Log("Heavy JSON parsing with reflection")
+	b.Log("Email regex validation per event")
+	b.Log("Reduce aggregation with string operations")
+	b.Log("Type transformation via ReduceTransformAndStream")
+	b.Log("")
 }
