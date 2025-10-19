@@ -10,6 +10,15 @@ type SimpleEvent struct {
 	Value float64
 }
 
+type ComputeEvent struct {
+	ID          int     `json:"id"`
+	Email       string  `json:"email"`
+	JSONPayload string  `json:"payload"`
+	IPAddress   string  `json:"ip_address"`
+	Value       float64 `json:"value"`
+	Timestamp   int64   `json:"timestamp"`
+}
+
 type EventPaid struct {
 	Original SimpleEvent
 	New      SimpleEvent
