@@ -41,7 +41,7 @@ func (s *GenerateStage[T]) ProcessBatch(batch []T) ([]T, error) {
 }
 
 // Connect implements the concurrent processing logic with batching and worker pools.
-func (s *GenerateStage[T]) Connect(wg *sync.WaitGroup, inChan <-chan T, outChan chan<- T, emitter Emitter) error {
+func (s *GenerateStage[T]) Connect(wg *sync.WaitGroup, inChan <-chan T, outChan chan<- T, emitter Emitter, executionID string, index uint32) error {
 	defer wg.Done()
 
 	// start the worker pool.

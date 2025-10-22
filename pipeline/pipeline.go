@@ -1,7 +1,9 @@
 package pipeline
 
 import (
+	"strings"
 	"sync"
+	"time"
 )
 
 // Generic Pipeline that can work with any type T
@@ -9,13 +11,28 @@ type Pipeline[T any] struct {
 	config          Config
 	stages          []Stage[T]
 	sourceTransform interface{} // Holds transformation info for mixed-type execution
+
+	executionID  string
+	pipelineType string
+	startTime    time.Time
+	inputCount   uint64
+	outputCount  uint64
 }
 
 // NewPipeline creates a new generic Pipeline instance.
 func NewPipeline[T any](cfg Config) *Pipeline[T] {
+	if cfg.Emitter == nil {
+		cfg.Emitter = &NoOpEmitter{}
+	}
+
+	// Generate execution ID if not provided
+	if cfg.ExecutionID == "" {
+		cfg.ExecutionID = GenerateExecutionID()
+	}
 	return &Pipeline[T]{
-		config: cfg,
-		stages: make([]Stage[T], 0),
+		config:      cfg,
+		stages:      make([]Stage[T], 0),
+		executionID: cfg.ExecutionID,
 	}
 }
 
@@ -66,12 +83,16 @@ func (p *Pipeline[T]) collectWithTransform(collectStage *CollectStage[T]) *Colle
 
 // Execute runs the pipeline on the provided input.
 func (p *Pipeline[T]) Execute(inputChan <-chan T) {
-	// if p.sourceTransform != nil {
-	// This is a transformed pipeline, use special execution path
-	// p.executeWithTransform(input)
-	// return
-	// }
+	p.startTime = time.Now()
+	p.pipelineType = p.generatePipelineType()
 
+	// Emit pipeline start
+	p.config.Emitter.EmitPipelineStart(p.executionID, p.pipelineType, p.config)
+
+	defer func() {
+		duration := time.Since(p.startTime)
+		p.config.Emitter.EmitPipelineEnd(p.executionID, p.inputCount, p.outputCount, duration)
+	}()
 	p.executeNormal(inputChan)
 }
 
@@ -82,7 +103,6 @@ func (p *Pipeline[T]) executeNormal(inputChan <-chan T) {
 	}
 
 	var wg sync.WaitGroup
-	var emitter Emitter // will be implemented later.
 
 	// Create channels for each connection between stages.
 	channels := make([]chan T, len(p.stages)+1)
@@ -97,7 +117,9 @@ func (p *Pipeline[T]) executeNormal(inputChan <-chan T) {
 		outChan := channels[i+1]
 
 		go func(s Stage[T], in <-chan T, out chan<- T) {
-			if err := s.Connect(&wg, in, out, emitter); err != nil {
+			var index uint32
+			index = uint32(i)
+			if err := s.Connect(&wg, in, out, p.config.Emitter, p.executionID, index); err != nil {
 				// TODO: Better error handling
 				panic(err)
 			}
@@ -120,4 +142,12 @@ func (p *Pipeline[T]) executeNormal(inputChan <-chan T) {
 	}()
 
 	wg.Wait()
+}
+
+func (p *Pipeline[T]) generatePipelineType() string {
+	var stageNames []string
+	for _, stage := range p.stages {
+		stageNames = append(stageNames, stage.Name())
+	}
+	return strings.Join(stageNames, "->")
 }

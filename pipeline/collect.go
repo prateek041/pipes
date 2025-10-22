@@ -21,7 +21,7 @@ func (s *CollectStage[T]) ProcessBatch(batch []T) ([]T, error) {
 	return batch, nil
 }
 
-func (s *CollectStage[T]) Connect(wg *sync.WaitGroup, inChan <-chan T, outChan chan<- T, emitter Emitter) error {
+func (s *CollectStage[T]) Connect(wg *sync.WaitGroup, inChan <-chan T, outChan chan<- T, emitter Emitter, executionID string, index uint32) error {
 	defer wg.Done()
 	defer close(outChan)
 

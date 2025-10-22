@@ -1,11 +1,40 @@
 package pipeline
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 // Emitter interface for observability.
 type Emitter interface {
-	EmitMetadata(stageName string, data map[string]any)
+	// Pipeline level metrics
+	EmitPipelineStart(executionID string, pipelineType string, config Config)
+	EmitPipelineEnd(executionID string, inputCount, outputCount uint64, duration time.Duration)
+
+	// Stage level metrics
+	EmitStageStart(executionID, stageName string, stageIndex uint32)
+	EmitStageEnd(executionID, stageName string, inputCount, outputCount uint64, duration time.Duration)
+
+	// Batch Level Events
+	EmitBatchMetrics(executionID, stageName, batchID, workerID string, batchSize uint32, processingTime time.Duration)
+
+	// Error tracking
+	EmitError(executionID, stageName, errorMsg string)
+
+	// Lifecycle
+	Close() error
 }
+
+// NoOpEmitter for when observability is disabled
+type NoOpEmitter struct{}
+
+func (n *NoOpEmitter) EmitPipelineStart(string, string, Config)                               {}
+func (n *NoOpEmitter) EmitPipelineEnd(string, uint64, uint64, time.Duration)                  {}
+func (n *NoOpEmitter) EmitStageStart(string, string, uint32)                                  {}
+func (n *NoOpEmitter) EmitStageEnd(string, string, uint64, uint64, time.Duration)             {}
+func (n *NoOpEmitter) EmitBatchMetrics(string, string, string, string, uint32, time.Duration) {}
+func (n *NoOpEmitter) EmitError(string, string, string)                                       {}
+func (n *NoOpEmitter) Close() error                                                           { return nil }
 
 // Generic Stage interface that can work with any type T
 type Stage[T any] interface {
@@ -14,7 +43,7 @@ type Stage[T any] interface {
 
 	// Connect sets up the plumbing (channels and goroutines) for this stage.
 	// Waitgroup to signal when it's finished processing.
-	Connect(wg *sync.WaitGroup, inChan <-chan T, outChan chan<- T, emitter Emitter) error
+	Connect(wg *sync.WaitGroup, inChan <-chan T, outChan chan<- T, emitter Emitter, executionID string, stageIndex uint32) error
 
 	// Name returns the stage name for observability and logging.
 	Name() string

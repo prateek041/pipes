@@ -1,7 +1,9 @@
 package pipeline
 
 import (
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -37,8 +39,18 @@ func (s *FilterStage[T]) ProcessBatch(batch []T) ([]T, error) {
 	return output, nil
 }
 
-func (s *FilterStage[T]) Connect(wg *sync.WaitGroup, inChan <-chan T, outChan chan<- T, emitter Emitter) error {
+func (s *FilterStage[T]) Connect(wg *sync.WaitGroup, inChan <-chan T, outChan chan<- T, emitter Emitter, executionId string, stageIndex uint32) error {
 	defer wg.Done()
+
+	stageStart := time.Now()
+	var inputCount, outputCount uint64
+
+	emitter.EmitStageStart(executionId, s.Name(), stageIndex)
+
+	defer func() {
+		duration := time.Since(stageStart)
+		emitter.EmitStageEnd(executionId, s.Name(), inputCount, outputCount, duration)
+	}()
 
 	// Spin up the workers and start processing.
 	workerChan := make(chan []T, s.config.MaxWorkersPerStage)
@@ -47,12 +59,22 @@ func (s *FilterStage[T]) Connect(wg *sync.WaitGroup, inChan <-chan T, outChan ch
 	for i := 0; i < s.config.MaxWorkersPerStage; i++ {
 		workerWg.Add(1)
 		go func() {
+			workerId := fmt.Sprintf("worker-%d", i)
 			defer workerWg.Done()
 			for batch := range workerChan {
+				batchId := GenerateBatchID()
+				batchStart := time.Now()
 				processedBatch, err := s.ProcessBatch(batch)
 				if err != nil {
-					panic(err)
+					emitter.EmitError(executionId, s.Name(), err.Error())
+					continue
 				}
+
+				processingDuration := time.Since(batchStart)
+				emitter.EmitBatchMetrics(executionId, s.Name(), batchId, workerId, uint32(len(batch)), processingDuration)
+
+				atomic.AddUint64(&inputCount, uint64(len(batch)))
+				atomic.AddUint64(&outputCount, uint64(len(processedBatch)))
 
 				// Emitting event by event on the output channel.
 				for _, item := range processedBatch {

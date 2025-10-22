@@ -118,37 +118,48 @@ func (r *ReduceTransformStage[T, R]) Connect(wg *sync.WaitGroup, inChan <-chan T
 // Use this if you want the final result of the execution.
 func ReduceTransformAndExecute[T, R any](p *Pipeline[T], fn func([]T) R, input []T) []R {
 	transformStage := NewReduceTransformStage(p.config, fn)
-	return executeTransform(p, transformStage, input)
+	return executeTransform(p, transformStage, input, p.executionID)
 }
 
 // ReduceTransformAndStream runs the pipeline and returns a channel you can use to chain the pipeline
 // further.
 // Use this if you want to chain this pipeline further.
-func ReduceTransformAndStream[T, R any](p *Pipeline[T], fn func([]T) R, inputChan <-chan T) <-chan R {
+// Since this is a transform pipeline, we are transforming
+// and executing all the pipeline stages just before it, therefore
+// we will also be emitting pipeline related tasks up till now.
+func ReduceTransformAndStream[T, R any](p *Pipeline[T], fn func([]T) R, inputChan <-chan T) (<-chan R, Config) {
+	p.startTime = time.Now()
+
 	transformStage := NewReduceTransformStage(p.config, fn)
 	resultChan := make(chan R, p.config.MaxBatchSize)
 
+	p.pipelineType = p.generatePipelineType()
+
+	p.config.Emitter.EmitPipelineStart(p.executionID, p.pipelineType, p.config)
+
 	go func() {
-		results := executeTransformStream(p, transformStage, inputChan)
+		results := executeTransformStream(p, transformStage, inputChan, p.executionID)
 		for res := range results {
 			resultChan <- res
 		}
+		duration := time.Since(p.startTime)
+		p.config.Emitter.EmitPipelineEnd(p.executionID, p.inputCount, p.outputCount, duration)
 		close(resultChan)
 	}()
 
-	return resultChan
+	return resultChan, p.config
 }
 
-func executeTransformStream[T, R any](sourcePipeline *Pipeline[T], transformStage *ReduceTransformStage[T, R], inputChan <-chan T) <-chan R {
+func executeTransformStream[T, R any](sourcePipeline *Pipeline[T], transformStage *ReduceTransformStage[T, R], inputChan <-chan T, executionID string) <-chan R {
 	outputChan := make(chan R, sourcePipeline.config.MaxBatchSize)
-	var emitter Emitter
+	// var emitter Emitter
 	if len(sourcePipeline.stages) == 0 {
 		// No Source stages just apply the transform directly.
 		var wg sync.WaitGroup
 
 		wg.Add(1)
 		go func() {
-			if err := transformStage.Connect(&wg, inputChan, outputChan, emitter); err != nil {
+			if err := transformStage.Connect(&wg, inputChan, outputChan, sourcePipeline.config.Emitter); err != nil {
 				panic(err)
 			}
 		}()
@@ -176,8 +187,10 @@ func executeTransformStream[T, R any](sourcePipeline *Pipeline[T], transformStag
 		wg.Add(1)
 		inChan := sourceChannels[i]
 		outChan := sourceChannels[i+1]
+		var index uint32
+		index = uint32(i)
 		go func(s Stage[T], in <-chan T, out chan<- T) {
-			if err := s.Connect(&wg, in, out, emitter); err != nil {
+			if err := s.Connect(&wg, in, out, sourcePipeline.config.Emitter, executionID, index); err != nil {
 				panic(err)
 			}
 		}(stage, inChan, outChan)
@@ -186,7 +199,7 @@ func executeTransformStream[T, R any](sourcePipeline *Pipeline[T], transformStag
 	// Connect transform stage to source pipeline output
 	wg.Add(1)
 	go func() {
-		if err := transformStage.Connect(&wg, sourceChannels[len(sourceChannels)-1], outputChan, emitter); err != nil {
+		if err := transformStage.Connect(&wg, sourceChannels[len(sourceChannels)-1], outputChan, sourcePipeline.config.Emitter); err != nil {
 			panic(err)
 		}
 	}()
@@ -209,7 +222,7 @@ func executeTransformStream[T, R any](sourcePipeline *Pipeline[T], transformStag
 }
 
 // ExecuteTransform executes a pipeline with type transformation from T to R
-func executeTransform[T, R any](sourcePipeline *Pipeline[T], transformStage *ReduceTransformStage[T, R], input []T) []R {
+func executeTransform[T, R any](sourcePipeline *Pipeline[T], transformStage *ReduceTransformStage[T, R], input []T, executionID string) []R {
 	if len(sourcePipeline.stages) == 0 {
 		// No source stages, just apply transform directly
 		result, _ := transformStage.ProcessBatch(input)
@@ -228,11 +241,13 @@ func executeTransform[T, R any](sourcePipeline *Pipeline[T], transformStage *Red
 
 	// Start source pipeline stages
 	for i, stage := range sourcePipeline.stages {
+		var index uint32
+		index = uint32(i)
 		wg.Add(1)
 		inChan := sourceChannels[i]
 		outChan := sourceChannels[i+1]
 		go func(s Stage[T], in <-chan T, out chan<- T) {
-			if err := s.Connect(&wg, in, out, emitter); err != nil {
+			if err := s.Connect(&wg, in, out, emitter, executionID, index); err != nil {
 				panic(err)
 			}
 		}(stage, inChan, outChan)

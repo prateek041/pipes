@@ -1,7 +1,9 @@
 package pipeline
 
 import (
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -37,26 +39,49 @@ func (s *MapStage[T]) ProcessBatch(batch []T) ([]T, error) {
 }
 
 // Connect implements the concurrent processing logic with batching and worker pools.
-func (s *MapStage[T]) Connect(wg *sync.WaitGroup, inChan <-chan T, outChan chan<- T, emitter Emitter) error {
+func (s *MapStage[T]) Connect(wg *sync.WaitGroup, inChan <-chan T, outChan chan<- T, emitter Emitter, executionID string, stageIndex uint32) error {
 	defer wg.Done()
+
+	stageStart := time.Now()
+	var inputCount, outputCount uint64
+
+	// Emit stage start
+	emitter.EmitStageStart(executionID, s.Name(), stageIndex)
+
+	defer func() {
+		duration := time.Since(stageStart)
+		emitter.EmitStageEnd(executionID, s.Name(), inputCount, outputCount, duration)
+	}()
 
 	// start the worker pool.
 	workChan := make(chan []T, s.config.MaxWorkersPerStage)
 	var workerWg sync.WaitGroup
+
 	for i := 0; i < s.config.MaxWorkersPerStage; i++ {
+		workerId := fmt.Sprintf("worker-%d", i)
 		workerWg.Add(1)
-		go func() {
+		go func(workerId string) {
 			defer workerWg.Done()
 			for batch := range workChan {
+				batchId := GenerateBatchID()
+				batchStart := time.Now()
 				processedBatch, err := s.ProcessBatch(batch)
 				if err != nil {
-					panic(err) // for now just panic.
+					emitter.EmitError(executionID, s.Name(), err.Error())
+					continue
 				}
+
+				processingDuration := time.Since(batchStart)
+				emitter.EmitBatchMetrics(executionID, s.Name(), batchId, workerId, uint32(len(batch)), processingDuration)
+
+				// Count metrics
+				atomic.AddUint64(&inputCount, uint64(len(batch)))
+				atomic.AddUint64(&outputCount, uint64(len(processedBatch)))
 				for _, event := range processedBatch {
 					outChan <- event
 				}
 			}
-		}()
+		}(workerId)
 	}
 
 	batch := make([]T, 0, s.config.MaxBatchSize)

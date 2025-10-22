@@ -546,7 +546,7 @@ func concurrentReduceProcessing(events []ComputeEvent, workerCount int) []Aggreg
 		})
 
 	// Use ReduceTransformAndStream to connect pipelines
-	reducedChan := pipeline.ReduceTransformAndStream(firstPipeline,
+	reducedChan, cfg := pipeline.ReduceTransformAndStream(firstPipeline,
 		func(batch []pipeline.ComputeEvent) AggregatedResult {
 			// Convert to ComputeEvent for processing
 			convertedBatch := make([]ComputeEvent, len(batch))
