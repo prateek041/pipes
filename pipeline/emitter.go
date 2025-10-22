@@ -46,13 +46,13 @@ type ClickHouseEmitter struct {
 	mu     sync.Mutex
 }
 
-// connect establishes a connection to ClickHouse using hardcoded connection
-// parameters. It returns a driver.Conn that can be used for database operations.
-func connect() (driver.Conn, error) {
+// connect establishes a connection to ClickHouse using the provided configuration.
+// It returns a driver.Conn that can be used for database operations.
+func connect(config ObservabilityConfig) (driver.Conn, error) {
 	var (
 		ctx       = context.Background()
 		conn, err = clickhouse.Open(&clickhouse.Options{
-			Addr: []string{"localhost:19000"},
+			Addr: []string{config.DatabaseURL},
 			Auth: clickhouse.Auth{
 				Database: "default",
 				Username: "default",
@@ -67,7 +67,9 @@ func connect() (driver.Conn, error) {
 				},
 			},
 			Debugf: func(format string, v ...interface{}) {
-				fmt.Printf(format, v)
+				if config.Debug {
+					fmt.Printf(format, v)
+				}
 			},
 		})
 	)
@@ -105,7 +107,7 @@ func NewClickHouseEmitter(config ObservabilityConfig) (*ClickHouseEmitter, error
 	}
 
 	// Connect to ClickHouse
-	conn, err := connect()
+	conn, err := connect(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to ClickHouse: %w", err)
 	}

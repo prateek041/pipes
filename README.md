@@ -18,6 +18,145 @@ A lightweight, high-performance Go library for building concurrent data processi
 go get github.com/prateek041/pipes
 ```
 
+## Docker Demo
+
+To run the complete demo with ClickHouse metrics collection and Grafana dashboard:
+
+```bash
+# Start all services (ClickHouse, Grafana, and Pipeline application)
+docker-compose up
+
+# Or run in background
+docker-compose up -d
+
+# View logs
+docker-compose logs -f pipeline
+
+# Stop all services
+docker-compose down
+```
+
+The demo will:
+- Start ClickHouse database on port 18123 (HTTP) and 19000 (Native TCP)
+- Start Grafana dashboard on port 3000 (admin/admin)
+- Run the pipeline application with metrics collection enabled
+
+Access Grafana at http://localhost:3000 to view pipeline metrics and performance data.
+
+## Command Line Benchmarking Tool
+
+The pipeline library includes a comprehensive CLI tool for benchmarking different event types and configurations.
+
+### Building the CLI
+
+```bash
+# Build the CLI executable
+go build ./cmd/main.go
+
+# Or build with a custom name
+go build -o pipeline-benchmark ./cmd/main.go
+```
+
+### CLI Usage
+
+```bash
+# Show help and all available options
+./main -help
+
+# Run default benchmarks (both SimpleEvent and MableEvent)
+./main
+
+# Run specific event type benchmarks
+./main -type simple
+./main -type mable
+./main -type both
+
+# Custom event counts
+./main -counts "100,1000,10000,100000"
+
+# Specify number of workers
+./main -workers 8
+
+# Custom output file
+./main -output my_benchmark_results.csv
+
+# Run without ClickHouse metrics (useful for standalone testing)
+./main -metrics=false
+
+# Combined example: MableEvent benchmarks with custom settings
+./main -type mable -counts "1000,10000,100000" -workers 16 -output mable_benchmark.csv -metrics=false
+```
+
+### Docker CLI Usage
+
+```bash
+# Build the benchmark image
+docker build -t pipeline-benchmark .
+
+# Run with default settings (shows help)
+docker run pipeline-benchmark
+
+# Run benchmarks with volume mounted for output
+docker run -v $(pwd)/results:/app/results pipeline-benchmark ./main -output /app/results/docker_benchmark.csv
+
+# Run specific benchmark configurations
+docker run pipeline-benchmark ./main -type simple -counts "1000,10000" -metrics=false
+
+# Full benchmark suite with results saved locally
+docker run -v $(pwd)/results:/app/results pipeline-benchmark ./main -type both -counts "10,100,1000,10000,100000,1000000" -output /app/results/full_benchmark.csv
+```
+
+### CLI Options Reference
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `-input` | string | - | Input file path (optional - generates data if not provided) |
+| `-output` | string | `benchmark_results.csv` | Output CSV file path for results |
+| `-counts` | string | `10,100,1000,10000,100000,1000000` | Comma-separated list of event counts |
+| `-type` | string | `both` | Event type: `simple`, `mable`, or `both` |
+| `-workers` | int | CPU cores | Number of worker goroutines |
+| `-metrics` | bool | `true` | Enable ClickHouse metrics collection |
+| `-help` | bool | `false` | Show help message |
+
+### Output Format
+
+The CLI generates CSV files with the following columns:
+
+- **EventType**: Type of event processed (`SimpleEvent` or `MableEvent`)
+- **EventCount**: Number of events in the benchmark run
+- **Workers**: Number of worker goroutines used
+- **ProcessingTimeMs**: Total processing time in milliseconds
+- **ThroughputEventsPerSec**: Events processed per second
+- **TotalMemoryBytes**: Total memory allocated during processing
+- **AllocatedMemoryBytes**: Memory allocated at the end of processing
+- **Timestamp**: When the benchmark was run
+
+### Example Output
+
+```csv
+EventType,EventCount,Workers,ProcessingTimeMs,ThroughputEventsPerSec,TotalMemoryBytes,AllocatedMemoryBytes,Timestamp
+SimpleEvent,10,14,0.68,14737.26,164272,509344,2025-10-22T19:54:13Z
+SimpleEvent,100,14,1.14,87812.35,664512,1175232,2025-10-22T19:54:13Z
+MableEvent,10,14,0.12,80053.80,121456,487936,2025-10-22T19:54:13Z
+MableEvent,100,14,0.17,586940.57,214688,1110048,2025-10-22T19:54:13Z
+```
+
+### Running Tests vs CLI Benchmarks
+
+The project includes two types of benchmarking:
+
+1. **Go Test Benchmarks** - Comprehensive, heavy computational benchmarks with detailed analysis comparing sequential and concurrent processing:
+   ```bash
+   go test -bench=. -v ./cmd/ -benchtime=1s
+   ```
+
+2. **CLI Benchmarks** - Simplified, user-friendly benchmarking for demonstrations:
+   ```bash
+   ./main -type both -counts "1000,10000,100000"
+   ```
+
+The Go test benchmarks include heavy operations like JSON parsing, regex validation, SHA-256 hashing, and provide detailed performance analysis. The CLI benchmarks are lightweight and designed for quick demonstrations and CSV output generation.
+
 ## Quick Start
 
 ```go
