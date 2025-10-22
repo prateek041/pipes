@@ -205,10 +205,12 @@ func (e *ClickHouseEmitter) EmitPipelineEnd(executionID string, inputCount, outp
 	}
 
 	endTime := time.Now()
+	startTime := endTime.Add(-duration)
 	durationMs := uint64(duration.Milliseconds())
 
 	metric := PipelineMetric{
 		ExecutionID: executionID,
+		StartTime:   startTime,
 		EndTime:     &endTime,
 		DurationMs:  &durationMs,
 		InputCount:  &inputCount,
@@ -259,12 +261,14 @@ func (e *ClickHouseEmitter) EmitStageEnd(executionID, stageName string, inputCou
 	}
 
 	endTime := time.Now()
+	startTime := endTime.Add(-duration)
 	durationMs := uint64(duration.Milliseconds())
 	throughput := float64(outputCount) / duration.Seconds()
 
 	metric := StageMetric{
 		ExecutionID:   executionID,
 		StageName:     stageName,
+		StartTime:     startTime,
 		EndTime:       &endTime,
 		DurationMs:    &durationMs,
 		InputEvents:   &inputCount,

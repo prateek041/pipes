@@ -37,11 +37,12 @@ docker-compose down
 ```
 
 The demo will:
+
 - Start ClickHouse database on port 18123 (HTTP) and 19000 (Native TCP)
 - Start Grafana dashboard on port 3000 (admin/admin)
 - Run the pipeline application with metrics collection enabled
 
-Access Grafana at http://localhost:3000 to view pipeline metrics and performance data.
+Access Grafana at <http://localhost:3000> to view pipeline metrics and performance data.
 
 ## Command Line Benchmarking Tool
 
@@ -108,15 +109,15 @@ docker run -v $(pwd)/results:/app/results pipeline-benchmark ./main -type both -
 
 ### CLI Options Reference
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `-input` | string | - | Input file path (optional - generates data if not provided) |
-| `-output` | string | `benchmark_results.csv` | Output CSV file path for results |
-| `-counts` | string | `10,100,1000,10000,100000,1000000` | Comma-separated list of event counts |
-| `-type` | string | `both` | Event type: `simple`, `mable`, or `both` |
-| `-workers` | int | CPU cores | Number of worker goroutines |
-| `-metrics` | bool | `true` | Enable ClickHouse metrics collection |
-| `-help` | bool | `false` | Show help message |
+| Option     | Type   | Default                            | Description                                                 |
+| ---------- | ------ | ---------------------------------- | ----------------------------------------------------------- |
+| `-input`   | string | -                                  | Input file path (optional - generates data if not provided) |
+| `-output`  | string | `benchmark_results.csv`            | Output CSV file path for results                            |
+| `-counts`  | string | `10,100,1000,10000,100000,1000000` | Comma-separated list of event counts                        |
+| `-type`    | string | `both`                             | Event type: `simple`, `mable`, or `both`                    |
+| `-workers` | int    | CPU cores                          | Number of worker goroutines                                 |
+| `-metrics` | bool   | `true`                             | Enable ClickHouse metrics collection                        |
+| `-help`    | bool   | `false`                            | Show help message                                           |
 
 ### Output Format
 
@@ -146,16 +147,71 @@ MableEvent,100,14,0.17,586940.57,214688,1110048,2025-10-22T19:54:13Z
 The project includes two types of benchmarking:
 
 1. **Go Test Benchmarks** - Comprehensive, heavy computational benchmarks with detailed analysis comparing sequential and concurrent processing:
+
    ```bash
    go test -bench=. -v ./cmd/ -benchtime=1s
    ```
 
 2. **CLI Benchmarks** - Simplified, user-friendly benchmarking for demonstrations:
+
    ```bash
    ./main -type both -counts "1000,10000,100000"
    ```
 
 The Go test benchmarks include heavy operations like JSON parsing, regex validation, SHA-256 hashing, and provide detailed performance analysis. The CLI benchmarks are lightweight and designed for quick demonstrations and CSV output generation.
+
+## Grafana dashboard
+
+Due to time constraints I wasn't able to fully implement beautiful dashboards that are shareable through
+a public URL, hence posting a few screenshots of how they looked on my personal computer
+along with sample Queries that can be used to create them.
+
+> [!NOTE]
+> One thing is a positive that the sample data is already present in clickhouse therefore
+> all the remaining work is on the grafana side. You have to install the clickhouse plugin
+> for grafana, and connect to it using following entries.
+> Server PORT: 8123
+> Name: some-clickhouse-server
+> Connection type: HTTP
+
+### See the Executions in the table or timeseries view
+
+```sql
+SELECT
+  toStartOfMinute(start_time) AS minute,
+  count() AS executions
+FROM pipeline_metrics.pipeline_executions
+GROUP BY minute
+ORDER BY minute ASC
+
+```
+
+### Pipeline Success Rate
+
+```sql
+SELECT
+    count() as total_executions,
+    countIf(status = 'completed') as successful,
+    countIf(status = 'failed') as failed,
+    (countIf(status = 'completed') / count()) * 100 as success_rate
+FROM pipeline_metrics.pipeline_executions
+WHERE timestamp >= now() - INTERVAL 1 HOUR
+```
+
+### See Stage Performance bottlenecks
+
+```sql
+SELECT
+    stage_name,
+    avg(duration_ms) as avg_duration_ms,
+    quantile(0.95)(duration_ms) as p95_duration_ms,
+    count() as execution_count
+FROM pipeline_metrics.stage_metrics
+WHERE timestamp >= now() - INTERVAL 1 HOUR
+    AND status = 'completed'
+GROUP BY stage_name
+ORDER BY avg_duration_ms DESC
+```
 
 ## Quick Start
 
@@ -165,7 +221,7 @@ package main
 import (
     "fmt"
     "time"
-    
+
     "github.com/prateek041/pipes/pipeline"
 )
 
@@ -176,13 +232,13 @@ func main() {
         MaxBatchSize:      100,
         BatchTimeout:      100 * time.Millisecond,
     }
-    
+
     // Create pipeline
     p := pipeline.NewPipeline[int](config).
         Filter(func(x int) bool { return x%2 == 0 }).  // Keep even numbers
         Map(func(x int) int { return x * x }).          // Square them
         Collect()                                       // Collect results
-    
+
     // Create input channel and send data
     input := make(chan int, 10)
     go func() {
@@ -191,10 +247,10 @@ func main() {
             input <- i
         }
     }()
-    
+
     // Execute pipeline
     p.Execute(input)
-    
+
     // Get results
     results := p.Results()
     fmt.Println("Results:", results) // [4, 16, 36, 64, 100]
@@ -273,34 +329,34 @@ type DailySummary struct {
 }
 
 // Create input channel
-	input := make(chan OrderEvent, 1000)
+ input := make(chan OrderEvent, 1000)
 
-	// Build pipeline with type transformation
-	firstPipeline := pipeline.NewPipeline[OrderEvent](config).
-		Filter(func(e OrderEvent) bool { return e.Amount > 0 }).
-		Map(func(e OrderEvent) OrderEvent {
-			// Apply business logic
-			return e
-		})
+ // Build pipeline with type transformation
+ firstPipeline := pipeline.NewPipeline[OrderEvent](config).
+  Filter(func(e OrderEvent) bool { return e.Amount > 0 }).
+  Map(func(e OrderEvent) OrderEvent {
+   // Apply business logic
+   return e
+  })
 
-	outputChan, cfg := pipeline.ReduceTransformAndStream(firstPipeline, func(batch []OrderEvent) DailySummary {
-		// Aggregate batch into summary
-		summary := DailySummary{TotalOrders: len(batch)}
-		userSet := make(map[int]bool)
+ outputChan, cfg := pipeline.ReduceTransformAndStream(firstPipeline, func(batch []OrderEvent) DailySummary {
+  // Aggregate batch into summary
+  summary := DailySummary{TotalOrders: len(batch)}
+  userSet := make(map[int]bool)
 
-		for _, event := range batch {
-			summary.TotalAmount += event.Amount
-			userSet[event.UserID] = true
-		}
-		summary.UniqueUsers = len(userSet)
+  for _, event := range batch {
+   summary.TotalAmount += event.Amount
+   userSet[event.UserID] = true
+  }
+  summary.UniqueUsers = len(userSet)
 
-		return summary
-	}, input)
+  return summary
+ }, input)
 
-	// Consume aggregated results
-	for summary := range outputChan {
-		fmt.Printf("Summary: %+v\n", summary)
-	}
+ // Consume aggregated results
+ for summary := range outputChan {
+  fmt.Printf("Summary: %+v\n", summary)
+ }
 ```
 
 ### Pipeline Chaining
@@ -387,7 +443,7 @@ The library automatically collects:
 The library is designed for high-throughput scenarios:
 
 - **Batched Processing**: Reduces goroutine overhead
-- **Worker Pools**: Configurable concurrency per stage  
+- **Worker Pools**: Configurable concurrency per stage
 - **Non-blocking**: Stages process independently with buffered channels
 - **Memory Efficient**: Streaming design with configurable batch sizes
 
@@ -415,6 +471,7 @@ Input → [Filter] → [Map] → [Generate] → [Collect] → Output
 ```
 
 Each stage:
+
 1. Receives elements via input channel
 2. Batches elements (size + timeout based)
 3. Processes batches concurrently with worker pool
@@ -443,6 +500,7 @@ go test -bench=. ./cmd
 # Lint code
 go vet ./...
 ```
+
 ## Roadmap
 
 - [ ] Additional stage types (If, GroupBy, Sort, Distinct)
@@ -450,3 +508,4 @@ go vet ./...
 - [ ] Pipeline visualization and debugging tools
 - [ ] Persistent state management for long-running pipelines
 - [ ] Built-in retry and circuit breaker patterns
+

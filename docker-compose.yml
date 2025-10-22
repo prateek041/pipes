@@ -59,7 +59,7 @@ services:
       CLICKHOUSE_DATABASE_URL: clickhouse:9000
     volumes:
       - ./results:/app/results
-    command: ["./main", "-type", "both", "-counts", "100,1000,10000", "-output", "/app/results/benchmark_results.csv"]
+    command: ["./main", "-type", "both", "-counts", "100,1000,10000, 100000, 1000000", "-output", "/app/results/benchmark_results.csv"]
 
 volumes:
   clickhouse_data:
