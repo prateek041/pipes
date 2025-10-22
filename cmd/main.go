@@ -1,3 +1,8 @@
+// Package main demonstrates usage examples and a small benchmark runner for
+// the pipeline package. It contains helper functions that construct test data,
+// run concurrent reduce pipelines, and perform CPU-bound work used by the
+// examples. The comments in this file follow Go documentation conventions so
+// they can be rendered by godoc.
 package main
 
 import (
@@ -12,16 +17,25 @@ import (
 	"github.com/prateek041/pipes/pipeline"
 )
 
+// filterFn reports whether the provided SimpleEvent should be kept. The
+// function returns true when the event's Value is greater than 50.0.
 func filterFn(e pipeline.SimpleEvent) bool {
 	return e.Value > 50.0
 }
 
+// mapFn transforms a SimpleEvent by offsetting its ID and prefixing Data
+// with "PROCESSED: ". The mapping is intentionally simple and used for
+// demonstration purposes in examples and benchmarks.
 func mapFn(e pipeline.SimpleEvent) pipeline.SimpleEvent {
 	e.ID = e.ID + 1000
 	e.Data = "PROCESSED: " + e.Data
 	return e
 }
 
+// avgFunction computes a simple aggregate value over a batch of
+// SimpleEvent. When the batch is empty it returns 0.0. The function prints
+// intermediate values for visibility in example runs but can be removed in
+// production code.
 func avgFunction(batch []pipeline.SimpleEvent) float64 {
 	if len(batch) == 0 {
 		return 0.0
@@ -35,6 +49,9 @@ func avgFunction(batch []pipeline.SimpleEvent) float64 {
 	return sum
 }
 
+// main is the entry point for the example/benchmark runner. It configures
+// observability, constructs test data, wires up a pipeline that performs
+// filtering, mapping and reducing, and then prints the final results.
 func main() {
 
 	observabilityConfig := pipeline.ObservabilityConfig{
@@ -81,7 +98,11 @@ func main() {
 	fmt.Println("final result", results)
 }
 
-// generateComputeTestData creates test events with heavy computation requirements
+// GenerateComputeTestData creates a slice of ComputeEvent populated with
+// synthetic data. The generated events contain payloads and fields that are
+// intentionally complex to exercise validation, parsing and hashing in
+// example pipelines. The function is deterministic given the same count and
+// time may be used only for timestamps.
 func GenerateComputeTestData(count int) []pipeline.ComputeEvent {
 	events := make([]pipeline.ComputeEvent, count)
 
@@ -115,7 +136,10 @@ func GenerateComputeTestData(count int) []pipeline.ComputeEvent {
 	return events
 }
 
-// Concurrent processing using pipeline with reduce streaming
+// ConcurrentReduceProcessing creates and runs a pipeline that reads
+// ComputeEvent values, applies filtration and mapping (heavy compute), then
+// reduces and streams aggregated results. The function returns the collected
+// AggregatedResult values produced by the reduce stage.
 func ConcurrentReduceProcessing(events []pipeline.ComputeEvent, workerCount int, emitter pipeline.Emitter) []pipeline.AggregatedResult {
 	cfg := pipeline.Config{
 		MaxWorkersPerStage: workerCount,
@@ -187,6 +211,10 @@ func ConcurrentReduceProcessing(events []pipeline.ComputeEvent, workerCount int,
 	return finalResults
 }
 
+// ValidateAndParseJSON validates a ComputeEvent's Email against a regular
+// expression and attempts to unmarshal the JSONPayload. The parsed JSON map
+// and a boolean success flag are returned. The function returns (nil, false)
+// when validation or parsing fails.
 func ValidateAndParseJSON(event pipeline.ComputeEvent) (map[string]interface{}, bool) {
 	// Regex validation for email
 	if !EmailRegex.MatchString(event.Email) {
@@ -202,9 +230,14 @@ func ValidateAndParseJSON(event pipeline.ComputeEvent) (map[string]interface{}, 
 	return parsed, true
 }
 
+// EmailRegex is a precompiled regular expression used to validate email
+// addresses in example data. It follows a permissive pattern suitable for
+// demonstration purposes and is not intended as a production-grade validator.
 var EmailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
 
-// computeHashes performs multiple SHA-256 hashing operations
+// ComputeHashes applies multiple rounds of SHA-256 hashing to selected
+// fields of a ComputeEvent to emulate CPU-bound work. The function truncates
+// hashed outputs for readability in examples.
 func ComputeHashes(event pipeline.ComputeEvent) pipeline.ComputeEvent {
 	// Hash email multiple times for increased computational load
 	hashedEmail := HashString(event.Email)
@@ -225,13 +258,17 @@ func ComputeHashes(event pipeline.ComputeEvent) pipeline.ComputeEvent {
 	return event
 }
 
-// hashString creates a SHA-256 hash of the input string
+// HashString returns the hexadecimal encoding of the SHA-256 digest for the
+// provided input string.
 func HashString(input string) string {
 	hash := sha256.Sum256([]byte(input))
 	return fmt.Sprintf("%x", hash)
 }
 
-// heavyReduceFunction performs aggregation with heavy computation
+// HeavyReduceFunction reduces a batch of ComputeEvent values into a single
+// AggregatedResult. The function demonstrates an expensive reduce step that
+// performs hashing and regex checks; it returns zero-value AggregatedResult
+// when the input batch is empty.
 func HeavyReduceFunction(batch []pipeline.ComputeEvent) pipeline.AggregatedResult {
 	if len(batch) == 0 {
 		return pipeline.AggregatedResult{}

@@ -8,6 +8,8 @@ import (
 )
 
 // FilterStage implements the Stage interface for the Filter primitive.
+// It evaluates the provided predicate for each element and forwards only
+// the elements that satisfy the predicate.
 type FilterStage[T any] struct {
 	config   Config
 	userFunc func(T) bool
@@ -39,6 +41,8 @@ func (s *FilterStage[T]) ProcessBatch(batch []T) ([]T, error) {
 	return output, nil
 }
 
+// Connect wires up concurrent workers and batches for the FilterStage. It
+// follows the same batching and worker pool pattern used by MapStage.
 func (s *FilterStage[T]) Connect(wg *sync.WaitGroup, inChan <-chan T, outChan chan<- T, emitter Emitter, executionId string, stageIndex uint32) error {
 	defer wg.Done()
 
@@ -58,7 +62,7 @@ func (s *FilterStage[T]) Connect(wg *sync.WaitGroup, inChan <-chan T, outChan ch
 
 	for i := 0; i < s.config.MaxWorkersPerStage; i++ {
 		workerWg.Add(1)
-		go func() {
+		go func(i int) {
 			workerId := fmt.Sprintf("worker-%d", i)
 			defer workerWg.Done()
 			for batch := range workerChan {
@@ -81,7 +85,7 @@ func (s *FilterStage[T]) Connect(wg *sync.WaitGroup, inChan <-chan T, outChan ch
 					outChan <- item
 				}
 			}
-		}()
+		}(i)
 	}
 
 	batch := make([]T, 0, s.config.MaxBatchSize)

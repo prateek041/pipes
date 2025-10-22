@@ -7,7 +7,9 @@ import (
 	"time"
 )
 
-// MapStage implements the Stage interface for the Map primitive.
+// MapStage implements the Stage interface for the Map primitive. It applies
+// a user-provided function to each element in a batch and forwards the
+// results downstream.
 type MapStage[T any] struct {
 	config   Config
 	userFunc func(T) T

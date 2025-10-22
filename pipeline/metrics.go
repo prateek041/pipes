@@ -2,6 +2,8 @@ package pipeline
 
 import "time"
 
+// PipelineMetric captures high level metrics for a pipeline execution. It is
+// primarily intended for shipping to external systems via an Emitter.
 type PipelineMetric struct {
 	ExecutionID     string     `json:"execution_id"`
 	PipelineType    string     `json:"pipeline_type"`
@@ -16,6 +18,8 @@ type PipelineMetric struct {
 	Status          string     `json:"status"` // "started", "completed", "failed"
 }
 
+// StageMetric describes metrics collected for an individual stage during
+// pipeline execution.
 type StageMetric struct {
 	ExecutionID   string     `json:"execution_id"`
 	StageName     string     `json:"stage_name"`
@@ -30,6 +34,7 @@ type StageMetric struct {
 	Status        string     `json:"status"` // "started", "completed", "failed"
 }
 
+// BatchMetric contains metrics for a processed batch within a stage.
 type BatchMetric struct {
 	ExecutionID      string    `json:"execution_id"`
 	StageName        string    `json:"stage_name"`
@@ -40,6 +45,7 @@ type BatchMetric struct {
 	Timestamp        time.Time `json:"timestamp"`
 }
 
+// ErrorMetric represents an error event captured during pipeline execution.
 type ErrorMetric struct {
 	ExecutionID string    `json:"execution_id"`
 	StageName   string    `json:"stage_name"`
@@ -47,7 +53,8 @@ type ErrorMetric struct {
 	Timestamp   time.Time `json:"timestamp"`
 }
 
-// Batch container for efficient ClickHouse insertion
+// MetricBatch is a container used to flush multiple metric types in a
+// single request to the backend.
 type MetricBatch struct {
 	PipelineMetrics []PipelineMetric `json:"pipeline_metrics"`
 	StageMetrics    []StageMetric    `json:"stage_metrics"`

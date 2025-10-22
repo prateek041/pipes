@@ -12,6 +12,9 @@ import (
 	"github.com/google/uuid"
 )
 
+// ObservabilityConfig configures the ClickHouseEmitter. When Enabled is
+// false the NewClickHouseEmitter returns a closed emitter that drops
+// metrics.
 type ObservabilityConfig struct {
 	Enabled       bool
 	DatabaseURL   string
@@ -22,6 +25,9 @@ type ObservabilityConfig struct {
 	Debug         bool
 }
 
+// ClickHouseEmitter asynchronously collects pipeline metrics and writes
+// them to ClickHouse. It uses buffered channels and background workers to
+// avoid blocking the pipeline execution.
 type ClickHouseEmitter struct {
 	config ObservabilityConfig
 	conn   driver.Conn
@@ -40,6 +46,8 @@ type ClickHouseEmitter struct {
 	mu     sync.Mutex
 }
 
+// connect establishes a connection to ClickHouse using hardcoded connection
+// parameters. It returns a driver.Conn that can be used for database operations.
 func connect() (driver.Conn, error) {
 	var (
 		ctx       = context.Background()
@@ -78,6 +86,8 @@ func connect() (driver.Conn, error) {
 	return conn, nil
 }
 
+// NewClickHouseEmitter constructs a ClickHouseEmitter and starts background
+// processors that periodically flush buffered metrics to ClickHouse.
 func NewClickHouseEmitter(config ObservabilityConfig) (*ClickHouseEmitter, error) {
 	if !config.Enabled {
 		return &ClickHouseEmitter{config: config, closed: true}, nil
@@ -103,6 +113,7 @@ func NewClickHouseEmitter(config ObservabilityConfig) (*ClickHouseEmitter, error
 	ctx, cancel := context.WithCancel(context.Background())
 
 	if err := conn.Ping(ctx); err != nil {
+		cancel()
 		return nil, fmt.Errorf("failed to ping ClickHouse: %w", err)
 	}
 
@@ -136,6 +147,9 @@ func NewClickHouseEmitter(config ObservabilityConfig) (*ClickHouseEmitter, error
 	return emitter, nil
 }
 
+// startBackgroundProcessors starts the background goroutines that process
+// metrics asynchronously. Each processor handles one metric type and flushes
+// batches to ClickHouse periodically.
 func (e *ClickHouseEmitter) startBackgroundProcessors() {
 	// Pipeline metrics processor
 	e.wg.Add(1)
@@ -154,7 +168,8 @@ func (e *ClickHouseEmitter) startBackgroundProcessors() {
 	go e.processErrorMetrics()
 }
 
-// Non-blocking emission methods
+// EmitPipelineStart records the start of a pipeline execution. This method
+// is non-blocking and will drop metrics if the buffer is full.
 func (e *ClickHouseEmitter) EmitPipelineStart(executionID, pipelineType string, config Config) {
 	if e.closed {
 		return
@@ -179,6 +194,9 @@ func (e *ClickHouseEmitter) EmitPipelineStart(executionID, pipelineType string, 
 	}
 }
 
+// EmitPipelineEnd records the completion of a pipeline execution including
+// final counts and duration. This method is non-blocking and will drop
+// metrics if the buffer is full.
 func (e *ClickHouseEmitter) EmitPipelineEnd(executionID string, inputCount, outputCount uint64, duration time.Duration) {
 	if e.closed {
 		return
@@ -205,6 +223,8 @@ func (e *ClickHouseEmitter) EmitPipelineEnd(executionID string, inputCount, outp
 	}
 }
 
+// EmitStageStart records the start of a stage execution within a pipeline.
+// This method is non-blocking and will drop metrics if the buffer is full.
 func (e *ClickHouseEmitter) EmitStageStart(executionID, stageName string, stageIndex uint32) {
 	if e.closed {
 		return
@@ -228,6 +248,9 @@ func (e *ClickHouseEmitter) EmitStageStart(executionID, stageName string, stageI
 	}
 }
 
+// EmitStageEnd records the completion of a stage execution including
+// throughput calculations. This method is non-blocking and will drop
+// metrics if the buffer is full.
 func (e *ClickHouseEmitter) EmitStageEnd(executionID, stageName string, inputCount, outputCount uint64, duration time.Duration) {
 	if e.closed {
 		return
@@ -257,6 +280,8 @@ func (e *ClickHouseEmitter) EmitStageEnd(executionID, stageName string, inputCou
 	}
 }
 
+// EmitBatchMetrics records metrics for a single batch processed by a worker.
+// This method is non-blocking and will drop metrics if the buffer is full.
 func (e *ClickHouseEmitter) EmitBatchMetrics(executionID, stageName, batchID, workerID string, batchSize uint32, processingTime time.Duration) {
 	if e.closed {
 		return
@@ -281,6 +306,8 @@ func (e *ClickHouseEmitter) EmitBatchMetrics(executionID, stageName, batchID, wo
 	}
 }
 
+// EmitError records an error that occurred during pipeline execution.
+// This method is non-blocking and will drop metrics if the buffer is full.
 func (e *ClickHouseEmitter) EmitError(executionID, stageName, errorMsg string) {
 	if e.closed {
 		return
@@ -302,7 +329,9 @@ func (e *ClickHouseEmitter) EmitError(executionID, stageName, errorMsg string) {
 	}
 }
 
-// Background processors with batching
+// processPipelineMetrics runs in a background goroutine and batches pipeline
+// metrics before flushing them to ClickHouse. It respects both buffer size
+// and flush interval limits.
 func (e *ClickHouseEmitter) processPipelineMetrics() {
 	defer e.wg.Done()
 
@@ -334,6 +363,8 @@ func (e *ClickHouseEmitter) processPipelineMetrics() {
 	}
 }
 
+// flushPipelineMetrics writes a batch of pipeline metrics to ClickHouse.
+// It handles connection preparation, data insertion, and error logging.
 func (e *ClickHouseEmitter) flushPipelineMetrics(metrics []PipelineMetric) {
 	ctx := context.Background()
 	if e.config.Debug {
@@ -341,10 +372,10 @@ func (e *ClickHouseEmitter) flushPipelineMetrics(metrics []PipelineMetric) {
 	}
 
 	batch, err := e.conn.PrepareBatch(ctx, `INSERT INTO pipeline_metrics.pipeline_executions (
-	        execution_id, pipeline_type, start_time, end_time, duration_ms,
-	        input_count, output_count, config_workers, config_batch_size,
-	        config_timeout_ms, status
-	    ) VALUES`)
+			execution_id, pipeline_type, start_time, end_time, duration_ms,
+			input_count, output_count, config_workers, config_batch_size,
+			config_timeout_ms, status
+		) VALUES`)
 
 	if err != nil {
 		log.Printf("Failed to prepare pipeline metrics statement: %v", err)
@@ -382,6 +413,8 @@ func (e *ClickHouseEmitter) flushPipelineMetrics(metrics []PipelineMetric) {
 	log.Println("pipeline metrics is prepped and sent", metrics)
 }
 
+// flushStageMetrics writes a batch of stage metrics to ClickHouse.
+// It handles connection preparation, data insertion, and error logging.
 func (e *ClickHouseEmitter) flushStageMetrics(metrics []StageMetric) {
 	ctx := context.Background()
 	if e.config.Debug {
@@ -389,10 +422,10 @@ func (e *ClickHouseEmitter) flushStageMetrics(metrics []StageMetric) {
 	}
 
 	batch, err := e.conn.PrepareBatch(ctx, `INSERT INTO pipeline_metrics.stage_metrics (
-        execution_id, stage_name, stage_index, start_time, end_time,
-        duration_ms, input_events, output_events, throughput_eps,
-        active_workers, status
-    ) VALUES`)
+		execution_id, stage_name, stage_index, start_time, end_time,
+		duration_ms, input_events, output_events, throughput_eps,
+		active_workers, status
+	) VALUES`)
 	if err != nil {
 		log.Printf("Failed to prepare stage metrics statement: %v", err)
 		return
@@ -425,7 +458,9 @@ func (e *ClickHouseEmitter) flushStageMetrics(metrics []StageMetric) {
 	log.Println("stage metrics prepped and sent", metrics)
 }
 
-// Similar implementations for other metric types...
+// processStageMetrics runs in a background goroutine and batches stage
+// metrics before flushing them to ClickHouse. It respects both buffer size
+// and flush interval limits.
 func (e *ClickHouseEmitter) processStageMetrics() {
 	defer e.wg.Done()
 
@@ -458,6 +493,9 @@ func (e *ClickHouseEmitter) processStageMetrics() {
 	}
 }
 
+// processBatchMetrics runs in a background goroutine and batches batch
+// metrics before flushing them to ClickHouse. It respects both buffer size
+// and flush interval limits.
 func (e *ClickHouseEmitter) processBatchMetrics() {
 	defer e.wg.Done()
 
@@ -489,6 +527,8 @@ func (e *ClickHouseEmitter) processBatchMetrics() {
 	}
 }
 
+// flushBatchMetrics writes a batch of batch metrics to ClickHouse.
+// It handles connection preparation, data insertion, and error logging.
 func (e *ClickHouseEmitter) flushBatchMetrics(metrics []BatchMetric) {
 	ctx := context.Background()
 
@@ -529,6 +569,8 @@ func (e *ClickHouseEmitter) flushBatchMetrics(metrics []BatchMetric) {
 	log.Println("Batch metrics is prepped and sent", metrics)
 }
 
+// flushErrorMetrics writes a batch of error metrics to ClickHouse.
+// It handles connection preparation, data insertion, and error logging.
 func (e *ClickHouseEmitter) flushErrorMetrics(metrics []ErrorMetric) {
 	ctx := context.Background()
 
@@ -566,6 +608,9 @@ func (e *ClickHouseEmitter) flushErrorMetrics(metrics []ErrorMetric) {
 	log.Println("Batch metrics is prepped and sent", metrics)
 }
 
+// processErrorMetrics runs in a background goroutine and batches error
+// metrics before flushing them to ClickHouse. It respects both buffer size
+// and flush interval limits.
 func (e *ClickHouseEmitter) processErrorMetrics() {
 	defer e.wg.Done()
 
@@ -597,6 +642,9 @@ func (e *ClickHouseEmitter) processErrorMetrics() {
 	}
 }
 
+// Close gracefully shuts down the ClickHouseEmitter by stopping background
+// processors, closing channels, and terminating the database connection.
+// It is safe to call Close multiple times.
 func (e *ClickHouseEmitter) Close() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -625,15 +673,20 @@ func (e *ClickHouseEmitter) Close() error {
 	return nil
 }
 
-// Utility function for generating IDs
+// GenerateExecutionID creates a new UUID string for tracking pipeline
+// executions. Each pipeline execution should have a unique execution ID.
 func GenerateExecutionID() string {
 	return uuid.New().String()
 }
 
+// GenerateBatchID creates a shortened UUID string for tracking individual
+// batches within pipeline stages. Returns the first 8 characters of a UUID.
 func GenerateBatchID() string {
 	return uuid.New().String()[:8] // Shorter for batch IDs
 }
 
+// getValidDuration ensures a duration value is non-negative by converting
+// negative values to zero. This prevents invalid duration metrics.
 func getValidDuration(duration int64) uint64 {
 	if duration < 0 {
 		return 0

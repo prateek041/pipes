@@ -1,3 +1,8 @@
+// Package pipeline provides a small, generic stream processing library. It
+// supports common primitives such as Map, Filter, Generate and a Reduce
+// transform that can change the element type. The package focuses on
+// batched processing, worker pools and simple observability hooks via the
+// Emitter interface.
 package pipeline
 
 import (
@@ -6,7 +11,6 @@ import (
 	"time"
 )
 
-// Generic Pipeline that can work with any type T
 type Pipeline[T any] struct {
 	config          Config
 	stages          []Stage[T]
@@ -19,7 +23,9 @@ type Pipeline[T any] struct {
 	outputCount  uint64
 }
 
-// NewPipeline creates a new generic Pipeline instance.
+// NewPipeline creates a new generic Pipeline instance. If cfg.Emitter is nil
+// a default NoOpEmitter is installed. NewPipeline will also generate an
+// ExecutionID when cfg.ExecutionID is not provided.
 func NewPipeline[T any](cfg Config) *Pipeline[T] {
 	if cfg.Emitter == nil {
 		cfg.Emitter = &NoOpEmitter{}
@@ -36,28 +42,33 @@ func NewPipeline[T any](cfg Config) *Pipeline[T] {
 	}
 }
 
-// Map adds a MapStage to the pipeline.
+// Map appends a Map stage to the Pipeline. The provided fn is applied to
+// each element processed by the stage.
 func (p *Pipeline[T]) Map(fn func(T) T) *Pipeline[T] {
 	stage := NewMapStage(p.config, fn)
 	p.stages = append(p.stages, stage)
 	return p
 }
 
-// Filter adds a FilterStage to the pipeline.
+// Filter appends a Filter stage to the Pipeline. The provided fn decides
+// whether each element is forwarded (true) or dropped (false).
 func (p *Pipeline[T]) Filter(fn func(T) bool) *Pipeline[T] {
 	stage := NewFilterStage(p.config, fn)
 	p.stages = append(p.stages, stage)
 	return p
 }
 
-// Generate adds a GenerateStage to the pipeline.
+// Generate appends a Generate stage which emits the original event plus a
+// generated event produced by the provided fn.
 func (p *Pipeline[T]) Generate(fn func(T) T) *Pipeline[T] {
 	stage := NewGenerateStage(p.config, fn)
 	p.stages = append(p.stages, stage)
 	return p
 }
 
-// Collect adds a CollectStage to the pipeline and returns it for accessing results.
+// Collect appends a Collect stage to the pipeline and returns the stage so
+// callers can access collected results via Results(). The Collect stage also
+// forwards events downstream to preserve pipeline behavior.
 func (p *Pipeline[T]) Collect() *CollectStage[T] {
 	stage := NewCollectStage[T]()
 

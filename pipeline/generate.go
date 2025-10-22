@@ -6,7 +6,8 @@ import (
 )
 
 // GenerateStage implements the Stage interface for the Generate primitive.
-// Generate takes an input event of type T and produces two events: the original + a new generated one.
+// The stage emits both the original event and a generated event produced by
+// the user function.
 type GenerateStage[T any] struct {
 	config   Config
 	userFunc func(T) T // Function to generate new event from original

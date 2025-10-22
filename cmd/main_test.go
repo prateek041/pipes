@@ -248,7 +248,9 @@ func concurrentProcessing(events []string, workerCount int) []string {
 	return collector.Results()
 }
 
-// Benchmark function that compares sequential vs concurrent performance
+// Benchmark compares sequential vs concurrent performance for heavy computational
+// pipelines. It measures JSON parsing, regex validation, SHA-256 hashing and
+// JSON marshaling across different event counts.
 func Benchmark(b *testing.B) {
 	eventCounts := []int{10, 100, 1000, 10000, 100000, 1000000}
 
@@ -581,7 +583,8 @@ func concurrentReduceProcessing(events []ComputeEvent, workerCount int) []Aggreg
 	return finalResults
 }
 
-// BenchmarkReduceStreaming benchmarks the reduce streaming functionality
+// BenchmarkReduceStreaming benchmarks the reduce streaming functionality that
+// includes filtering, mapping with multi-round hashing and reduce aggregation.
 func BenchmarkReduceStreaming(b *testing.B) {
 	eventCounts := []int{100, 1000, 5000, 10000, 100000, 1000000}
 

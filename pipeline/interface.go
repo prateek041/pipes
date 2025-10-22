@@ -5,7 +5,9 @@ import (
 	"time"
 )
 
-// Emitter interface for observability.
+// Emitter defines hooks that are invoked during pipeline execution for
+// observability and metrics collection. Implementations should prefer
+// non-blocking emission to avoid interfering with pipeline throughput.
 type Emitter interface {
 	// Pipeline level metrics
 	EmitPipelineStart(executionID string, pipelineType string, config Config)
@@ -25,7 +27,8 @@ type Emitter interface {
 	Close() error
 }
 
-// NoOpEmitter for when observability is disabled
+// NoOpEmitter is a trivial Emitter implementation that performs no
+// operations. It can be used as a default when observability is disabled.
 type NoOpEmitter struct{}
 
 func (n *NoOpEmitter) EmitPipelineStart(string, string, Config)                               {}
@@ -36,7 +39,10 @@ func (n *NoOpEmitter) EmitBatchMetrics(string, string, string, string, uint32, t
 func (n *NoOpEmitter) EmitError(string, string, string)                                       {}
 func (n *NoOpEmitter) Close() error                                                           { return nil }
 
-// Generic Stage interface that can work with any type T
+// Stage is the generic processing primitive. Implementations process
+// batches of items of type T and connect to upstream and downstream via
+// channels. Stage implementations are expected to respect the provided
+// WaitGroup and signal completion by calling wg.Done().
 type Stage[T any] interface {
 	// ProcessBatch is the method that runs inside a Worker Goroutine.
 	ProcessBatch(batch []T) ([]T, error)
@@ -49,13 +55,14 @@ type Stage[T any] interface {
 	Name() string
 }
 
-// TransformStage is for stages that can transform from type TIn to type TOut
-// This is useful for Reduce operations where input and output types differ
+// TransformStage is for stages that can transform from type TIn to type TOut.
+// This is useful for Reduce operations where input and output types differ.
 type TransformStage[TIn, TOut any] interface {
 	ProcessBatch(batch []TIn) ([]TOut, error)
 	Connect(wg *sync.WaitGroup, inChan <-chan TIn, outChan chan<- TOut, emitter Emitter) error
 	Name() string
 }
 
-// Type aliases for backward compatibility with SimpleEvent
+// SimpleEventStage is a type alias used for code that previously referenced
+// non-generic stages operating on SimpleEvent.
 type SimpleEventStage = Stage[SimpleEvent]
