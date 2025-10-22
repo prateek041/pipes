@@ -186,6 +186,8 @@ ORDER BY minute ASC
 
 ```
 
+![Table Execution View](assets/table-execution.png)
+
 ### Pipeline Success Rate
 
 ```sql
@@ -197,6 +199,8 @@ SELECT
 FROM pipeline_metrics.pipeline_executions
 WHERE timestamp >= now() - INTERVAL 1 HOUR
 ```
+
+![Pipeline Success Rate](assets/success-rate.png)
 
 ### See Stage Performance bottlenecks
 
@@ -212,6 +216,8 @@ WHERE timestamp >= now() - INTERVAL 1 HOUR
 GROUP BY stage_name
 ORDER BY avg_duration_ms DESC
 ```
+
+![Storage Performance Bottlenecks](assets/storage-performance-bottlenecks.png)
 
 ## Quick Start
 
